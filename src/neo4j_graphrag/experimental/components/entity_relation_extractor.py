@@ -21,6 +21,7 @@ import logging
 from typing import Any, List, Optional, Union
 
 import json_repair
+from openai import AsyncOpenAI
 from pydantic import ValidationError, validate_call
 
 from neo4j_graphrag.exceptions import LLMGenerationError
@@ -40,6 +41,130 @@ from neo4j_graphrag.llm import LLMInterface
 from neo4j_graphrag.utils.logging import prettify
 
 logger = logging.getLogger(__name__)
+
+# JSON Schema for OpenAI structured outputs equivalent to Neo4jGraph
+NEO4J_GRAPH_SCHEMA = {
+  "type": "object",
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A Neo4j node",
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "properties": {
+            "type": "object",
+            "description": "Node property key-value pairs",
+            "additionalProperties": {
+              "anyOf": [
+                { "type": "boolean" },
+                { "type": "integer" },
+                { "type": "number" },
+                { "type": "string" },
+                { "type": "string", "format": "date" },
+                { "type": "string", "format": "time" },
+                { "type": "string", "format": "date-time" },
+                { "type": "string", "pattern": "^P.*" },
+                {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      { "type": "boolean" },
+                      { "type": "integer" },
+                      { "type": "number" },
+                      { "type": "string" }
+                    ]
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["latitude", "longitude", "height"],
+                  "properties": {
+                    "latitude": { "type": "number" },
+                    "longitude": { "type": "number" },
+                    "height": { "type": "number" }
+                  },
+                  "additionalProperties": False
+                }
+              ]
+            }
+          },
+          "embedding_properties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "number" }
+            }
+          }
+        },
+        "required": ["id", "label"],
+        "additionalProperties": False
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "A Neo4j relationship",
+        "properties": {
+          "start_node_id": { "type": "string" },
+          "end_node_id": { "type": "string" },
+          "type": { "type": "string" },
+          "properties": {
+            "type": "object",
+            "description": "Relationship property key-value pairs",
+            "additionalProperties": {
+              "anyOf": [
+                { "type": "boolean" },
+                { "type": "integer" },
+                { "type": "number" },
+                { "type": "string" },
+                { "type": "string", "format": "date" },
+                { "type": "string", "format": "time" },
+                { "type": "string", "format": "date-time" },
+                { "type": "string", "pattern": "^P.*" },
+                {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      { "type": "boolean" },
+                      { "type": "integer" },
+                      { "type": "number" },
+                      { "type": "string" }
+                    ]
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": ["latitude", "longitude", "height"],
+                  "properties": {
+                    "latitude": { "type": "number" },
+                    "longitude": { "type": "number" },
+                    "height": { "type": "number" }
+                  },
+                  "additionalProperties": False
+                }
+              ]
+            }
+          },
+          "embedding_properties": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "number" }
+            }
+          }
+        },
+        "required": ["start_node_id", "end_node_id", "type"],
+        "additionalProperties": False
+      }
+    }
+  },
+  "required": ["nodes", "relationships"],
+  "additionalProperties": False
+}
 
 
 class OnError(enum.Enum):
@@ -160,9 +285,10 @@ class EntityRelationExtractor(Component):
 class LLMEntityRelationExtractor(EntityRelationExtractor):
     """
     Extracts a knowledge graph from a series of text chunks using a large language model.
+    This implementation uses OpenAI's structured outputs for more reliable JSON responses.
 
     Args:
-        llm (LLMInterface): The language model to use for extraction.
+        llm (LLMInterface): The language model to use for extraction (kept for compatibility).
         prompt_template (ERExtractionTemplate | str): A custom prompt template to use for extraction.
         create_lexical_graph (bool): Whether to include the text chunks in the graph in addition to the extracted entities and relations. Defaults to True.
         on_error (OnError): What to do when an error occurs during extraction. Defaults to raising an error.
@@ -186,20 +312,26 @@ class LLMEntityRelationExtractor(EntityRelationExtractor):
 
     def __init__(
         self,
-        llm: LLMInterface,
+        llm: Optional[LLMInterface] = None,
         prompt_template: Union[ERExtractionTemplate, str] = ERExtractionTemplate(),
         create_lexical_graph: bool = True,
         on_error: OnError = OnError.RAISE,
         max_concurrency: int = 5,
+        structured_output: bool = False,
     ) -> None:
         super().__init__(on_error=on_error, create_lexical_graph=create_lexical_graph)
-        self.llm = llm  # with response_format={ "type": "json_object" },
+        self.llm = llm  # kept for compatibility but not used
         self.max_concurrency = max_concurrency
+        self.structured_output = structured_output
         if isinstance(prompt_template, str):
             template = PromptTemplate(prompt_template, expected_inputs=[])
         else:
             template = prompt_template
         self.prompt_template = template
+        
+        # Always initialize OpenAI client
+        self.openai_client = AsyncOpenAI()
+        self.openai_model = "gpt-4o-2024-08-06"
 
     async def extract_for_chunk(
         self, schema: GraphSchema, examples: str, chunk: TextChunk
@@ -210,9 +342,35 @@ class LLMEntityRelationExtractor(EntityRelationExtractor):
             schema=schema.model_dump(exclude_none=True),
             examples=examples,
         )
-        llm_result = await self.llm.ainvoke(prompt)
+        
+        # Always use OpenAI SDK with different response formats based on structured_output parameter
+        if self.structured_output:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "graph_extraction",
+                    "strict": True,
+                    "schema": NEO4J_GRAPH_SCHEMA
+                }
+            }
+        else:
+            response_format = {"type": "json_object"}
+            
+        response = await self.openai_client.chat.completions.create(
+            model=self.openai_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            response_format=response_format,
+            temperature=0
+        )
+        llm_response_content = response.choices[0].message.content
+        
         try:
-            llm_generated_json = fix_invalid_json(llm_result.content)
+            llm_generated_json = fix_invalid_json(llm_response_content)
             result = json.loads(llm_generated_json)
         except (json.JSONDecodeError, InvalidJSONError) as e:
             if self.on_error == OnError.RAISE:
@@ -221,7 +379,7 @@ class LLMEntityRelationExtractor(EntityRelationExtractor):
                 logger.error(
                     f"LLM response is not valid JSON for chunk_index={chunk.index}"
                 )
-                logger.debug(f"Invalid JSON: {llm_result.content}")
+                logger.debug(f"Invalid JSON: {llm_response_content}")
             result = {"nodes": [], "relationships": []}
         try:
             chunk_graph = Neo4jGraph.model_validate(result)
