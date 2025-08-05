@@ -9,69 +9,74 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-async def test_structured_vs_traditional():
-    file_path = Path("examples/data/AA21-287A.pdf")
+# Global metrics storage
+metrics = {
+    'traditional_times': [],
+    'structured_times': [],
+    'time_percentages': [],
+    'extraction_percentages': []
+}
+
+async def test_structured_vs_traditional(file_path):
+    print(f"\nTesting: {file_path.name}")
     
-    # Load and split PDF
     loader = PdfLoader()
     document = await loader.run(filepath=file_path)
     
     splitter = FixedSizeSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = await splitter.run(document.text)
     
-    print(f"Document loaded: {len(document.text)} characters")
-    print(f"Chunks created: {len(chunks.chunks)} chunks")
+    print(f"Chunks: {len(chunks.chunks)}")
     
-    # Test with JSON object mode
-    print("\n=== JSON Object Mode ===")
     extractor_traditional = LLMEntityRelationExtractor(structured_output=False)
-    
     start_time = time.time()
     result_traditional = await extractor_traditional.run(chunks)
     traditional_time = time.time() - start_time
     
-    print(f"Execution time: {traditional_time:.2f} seconds")
-    print(f"Nodes extracted: {len(result_traditional.nodes)}")
-    print(f"Relationships extracted: {len(result_traditional.relationships)}")
-    
-    # Test with structured outputs
-    print("\n=== Structured Outputs ===")
     extractor_structured = LLMEntityRelationExtractor(structured_output=True)
-    
     start_time = time.time()
     result_structured = await extractor_structured.run(chunks)
     structured_time = time.time() - start_time
     
-    print(f"Execution time: {structured_time:.2f} seconds")
-    print(f"Nodes extracted: {len(result_structured.nodes)}")
-    print(f"Relationships extracted: {len(result_structured.relationships)}")
-    
-    # Performance comparison
-    print("\n=== Performance Comparison ===")
     time_diff = structured_time - traditional_time
     time_percentage = (time_diff / traditional_time) * 100
     
-    print(f"Time difference: {time_diff:.2f} seconds")
-    print(f"Structured outputs performance: {abs(time_percentage):.1f}% {'slower' if time_diff > 0 else 'faster'}")
-    
-    # Extraction comparison
-    node_diff = len(result_structured.nodes) - len(result_traditional.nodes)
-    rel_diff = len(result_structured.relationships) - len(result_traditional.relationships)
-    
-    print(f"\n=== Extraction Comparison ===")
-    print(f"Node difference: {node_diff:+d}")
-    print(f"Relationship difference: {rel_diff:+d}")
-    print(f"Extraction: Found {node_diff:+d} nodes and {rel_diff:+d} relationships vs traditional approach")
-    
-    # Calculate extraction rates
     traditional_total = len(result_traditional.nodes) + len(result_traditional.relationships)
     structured_total = len(result_structured.nodes) + len(result_structured.relationships)
     extraction_diff = structured_total - traditional_total
-    
     extraction_percentage = (extraction_diff / traditional_total) * 100
     
-    print(f"Total entities/relationships: {traditional_total} (traditional) vs {structured_total} (structured) = {extraction_diff:+d} difference")
-    print(f"Structured outputs extraction: {abs(extraction_percentage):.1f}% {'more' if extraction_diff > 0 else 'fewer'} entities/relationships")
+    print(f"Traditional: {traditional_time:.2f}s, {traditional_total} entities")
+    print(f"Structured: {structured_time:.2f}s, {structured_total} entities")
+    print(f"Performance: {abs(time_percentage):.1f}% {'slower' if time_diff > 0 else 'faster'}")
+    print(f"Extraction: {abs(extraction_percentage):.1f}% {'more' if extraction_diff > 0 else 'fewer'}")
+    
+    metrics['traditional_times'].append(traditional_time)
+    metrics['structured_times'].append(structured_time)
+    metrics['time_percentages'].append(time_percentage)
+    metrics['extraction_percentages'].append(extraction_percentage)
+
+async def main():
+    # corpus_folder = Path("examples/data/Medical")
+    # corpus_folder = Path("examples/data/ThreatIntelligence")
+    corpus_folder = Path("examples/data/RILA")
+    pdf_files = list(corpus_folder.glob("*.pdf"))
+    
+    print(f"Testing {len(pdf_files)} documents")
+    
+    for pdf_file in pdf_files:
+        await test_structured_vs_traditional(pdf_file)
+    
+    print("\n=== OVERALL AVERAGES ===")
+    avg_traditional_time = sum(metrics['traditional_times']) / len(metrics['traditional_times'])
+    avg_structured_time = sum(metrics['structured_times']) / len(metrics['structured_times'])
+    avg_time_percentage = sum(metrics['time_percentages']) / len(metrics['time_percentages'])
+    avg_extraction_percentage = sum(metrics['extraction_percentages']) / len(metrics['extraction_percentages'])
+    
+    print(f"Average Traditional Time: {avg_traditional_time:.2f}s")
+    print(f"Average Structured Time: {avg_structured_time:.2f}s")
+    print(f"Average Performance: {abs(avg_time_percentage):.1f}% {'slower' if avg_time_percentage > 0 else 'faster'}")
+    print(f"Average Extraction: {abs(avg_extraction_percentage):.1f}% {'more' if avg_extraction_percentage > 0 else 'fewer'} entities")
 
 if __name__ == "__main__":
-    asyncio.run(test_structured_vs_traditional())
+    asyncio.run(main())
