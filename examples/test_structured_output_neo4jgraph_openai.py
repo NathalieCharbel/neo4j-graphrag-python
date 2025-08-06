@@ -57,9 +57,10 @@ async def test_structured_vs_traditional(file_path):
     metrics['extraction_percentages'].append(extraction_percentage)
 
 async def main():
-    # corpus_folder = Path("examples/data/Medical")
-    # corpus_folder = Path("examples/data/ThreatIntelligence")
-    corpus_folder = Path("examples/data/RILA")
+    # corpus_folder = Path("examples/data/medical_papers")
+    corpus_folder = Path("examples/data/threat_intelligence")
+    # corpus_folder = Path("examples/data/RILA")
+    # corpus_folder = Path("examples/data/medical_reports")
     pdf_files = list(corpus_folder.glob("*.pdf"))
     
     print(f"Testing {len(pdf_files)} documents")
@@ -70,7 +71,11 @@ async def main():
     print("\n=== OVERALL AVERAGES ===")
     avg_traditional_time = sum(metrics['traditional_times']) / len(metrics['traditional_times'])
     avg_structured_time = sum(metrics['structured_times']) / len(metrics['structured_times'])
-    avg_time_percentage = sum(metrics['time_percentages']) / len(metrics['time_percentages'])
+    
+    # Calculate performance percentage from averaged times (correct method)
+    avg_time_diff = avg_structured_time - avg_traditional_time
+    avg_time_percentage = (avg_time_diff / avg_traditional_time) * 100
+    
     avg_extraction_percentage = sum(metrics['extraction_percentages']) / len(metrics['extraction_percentages'])
     
     print(f"Average Traditional Time: {avg_traditional_time:.2f}s")
