@@ -32,7 +32,7 @@ async def test_structured_vs_traditional(file_path, folder_name):
     traditional_totals = []
     structured_totals = []
     
-    for run in range(1):
+    for run in range(3):
         print(f"  Run {run + 1}/3")
         
         extractor_traditional = LLMEntityRelationExtractor(structured_output=False)
