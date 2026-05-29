@@ -6,7 +6,7 @@
 
 - Experimental: the schema-from-text extraction prompt now instructs the LLM to define each relationship type once and reuse it across patterns, using distinct type names only when patterns genuinely need different properties or constraints.
 - Experimental: LLM-auto-generated schemas now reconcile duplicate `relationship_types` (entries sharing the same label) by merging them into a single type that carries the union of their properties, emitting a warning log. This reflects that Neo4j relationship types are global per name.
-- Experimental (**breaking**): `GraphSchema` now raises `SchemaValidationError` when the same label appears more than once in `relationship_types`. Previously such duplicates were silently resolved by last-write-wins. Because Neo4j relationship types are global per name (every relationship of a given type shares the same properties and constraints regardless of its endpoints), a label cannot have two conflicting definitions.
+- Experimental (**breaking**): `GraphSchema` now raises `SchemaValidationError` when the same label appears more than once in `relationship_types`. Because Neo4j relationship types are global per name (every relationship of a given type shares the same properties and constraints regardless of its endpoints), a label cannot have two conflicting definitions. 
 
 ## 1.17.0
 
